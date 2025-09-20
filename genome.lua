@@ -194,4 +194,37 @@ function Genome:compatibility(other, cfg)
 	return distance
 end
 
+-- generate a unique ID (0-1) based on genome structure for neural network identification
+function Genome:getUniqueId()
+	-- create a hash based on genome structure
+	local hash = 0
+
+	-- hash based on number of nodes and connections
+	hash = hash + self.maxNodeId * 13
+
+	-- hash connections structure
+	local connCount = 0
+	for _, conn in pairs(self.connections) do
+		connCount = connCount + 1
+		if conn.enabled then
+			hash = hash + conn.from * 17 + conn.to * 19 + math.floor(conn.weight * 1000) * 23
+		end
+	end
+
+	-- hash node types
+	for id, node in pairs(self.nodes) do
+		if node.type == "input" then
+			hash = hash + id * 29
+		elseif node.type == "output" then
+			hash = hash + id * 31
+		else -- hidden
+			hash = hash + id * 37
+		end
+	end
+
+	-- normalize to 0-1 range using modulo and division
+	hash = math.abs(hash)
+	return (hash % 1000000) / 1000000
+end
+
 return Genome

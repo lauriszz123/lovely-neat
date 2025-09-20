@@ -1,14 +1,14 @@
 -- neat/innovation.lua
 -- Simple global innovation number tracker (module returns an object you should keep).
-local Innovation = {}
-Innovation.__index = Innovation
+local class = require("lovely-neat.moecsdified_middleclass")
 
-function Innovation.new()
-	return setmetatable({
-		nextInnovation = 1,
-		connMap = {}, -- key: from..":"..to => innovation id
-		nextNodeId = 1, -- unique node ids
-	}, Innovation)
+---@class Innovation: Object
+local Innovation = class("Innovation")
+
+function Innovation:initialize()
+	self.nextInnovation = 1
+	self.connMap = {} -- key: from..":"..to => innovation id
+	self.nextNodeId = 1 -- unique node ids
 end
 
 function Innovation:nextConnId(from, to)

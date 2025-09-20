@@ -1,4 +1,6 @@
 -- neat/population.lua
+local class = require("lovely-neat.modified_middleclass")
+
 local Innovation = require("lovely-neat.innovation")
 local Genome = require("lovely-neat.genome")
 local Node = require("lovely-neat.node")
@@ -6,12 +8,13 @@ local Species = require("lovely-neat.species")
 local Network = require("lovely-neat.network")
 local util = require("lovely-neat.util")
 
-local Population = {}
-Population.__index = Population
+---@class Population: Object
+local Population = class("Population")
 
 -- config with defaults
 local function defaultConfig()
-	return {
+	---@class DefaultPopulationConfig
+	local config = {
 		populationSize = 150,
 		inputCount = 3,
 		outputCount = 1,
@@ -30,24 +33,25 @@ local function defaultConfig()
 		stagnationThreshold = 15,
 		modInnovSeed = nil,
 	}
+
+	return config
 end
 
-function Population.new(cfg)
+function Population:initialize(cfg)
+	---@type DefaultPopulationConfig
 	cfg = cfg or {}
 	local finalCfg = defaultConfig()
 	for k, v in pairs(cfg) do
 		finalCfg[k] = v
 	end
 
-	local innov = Innovation.new()
-	local pop = setmetatable({
-		cfg = finalCfg,
-		innovation = innov,
-		genomes = {},
-		species = {},
-		generation = 1,
-		best = nil,
-	}, Population)
+	self.cfg = finalCfg
+	---@type Innovation
+	self.innovation = Innovation()
+	self.genomes = {}
+	self.species = {}
+	self.generation = 1
+	self.best = nil
 
 	-- create initial population
 	-- create nodes (inputs, optional bias, outputs)
@@ -57,16 +61,16 @@ function Population.new(cfg)
 		g.adjustedFitness = 0
 		-- create input nodes
 		for inId = 1, finalCfg.inputCount do
-			local nid = innov:nextNode()
+			local nid = self.innovation:nextNode()
 			g:addNode(Node.new(nid, "input"))
 		end
 		if finalCfg.bias then
-			local nid = innov:nextNode()
+			local nid = self.innovation:nextNode()
 			g:addNode(Node.new(nid, "bias"))
 		end
 		-- output nodes
 		for out = 1, finalCfg.outputCount do
-			local nid = innov:nextNode()
+			local nid = self.innovation:nextNode()
 			g:addNode(Node.new(nid, "output"))
 		end
 		-- fully connect inputs + bias to outputs
@@ -79,17 +83,15 @@ function Population.new(cfg)
 		for _, inId in ipairs(inputIds) do
 			for id, node in pairs(g.nodes) do
 				if node.type == "output" then
-					local innovId = innov:nextConnId(inId, node.id)
+					local innovId = self.innovation:nextConnId(inId, node.id)
 					g:addConnection(
 						require("neat.connection").new(inId, node.id, (math.random() * 2 - 1), true, innovId)
 					)
 				end
 			end
 		end
-		table.insert(pop.genomes, g)
+		table.insert(self.genomes, g)
 	end
-
-	return pop
 end
 
 -- speciate genomes

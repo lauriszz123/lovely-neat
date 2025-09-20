@@ -1,6 +1,6 @@
 -- neat/innovation.lua
 -- Simple global innovation number tracker (module returns an object you should keep).
-local class = require("lovely-neat.moecsdified_middleclass")
+local class = require("lovely-neat.modified_middleclass")
 
 ---@class Innovation: Object
 local Innovation = class("Innovation")

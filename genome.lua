@@ -1,18 +1,21 @@
 -- neat/genome.lua
+local class = require("lovely-neat.modified_middleclass")
+
 local Node = require("lovely-neat.node")
 local Connection = require("lovely-neat.connection")
-local util = require("lovely-neat.util")
 
-local Genome = {}
-Genome.__index = Genome
+---@class Genome: Object
+local Genome = class("Genome")
 
 -- genome holds nodes map (id -> Node) and connections map (innovation -> Connection)
-function Genome.new()
-	return setmetatable({
-		nodes = {}, -- id -> Node
-		connections = {}, -- innovation -> Connection
-		maxNodeId = 0,
-	}, Genome)
+function Genome:initialize()
+	---@type Node[]
+	self.nodes = {} -- id -> Node
+	self.connections = {} -- innovation -> Connection
+	self.maxNodeId = 0
+
+	self.fitness = 0
+	self.adjustedFitness = 0
 end
 
 -- convenience to add node
@@ -68,7 +71,7 @@ function Genome:mutateAddConnection(innovation, maxAttempts)
 				-- check existing
 				if not self:hasConnection(a, b) then
 					local innov = innovation:nextConnId(a, b)
-					local conn = require("neat.connection").new(a, b, (math.random() * 2 - 1), true, innov)
+					local conn = Connection.new(a, b, (math.random() * 2 - 1), true, innov)
 					self:addConnection(conn)
 					return true
 				end
@@ -93,14 +96,13 @@ function Genome:mutateAddNode(innovation)
 	local c = candidates[math.random(#candidates)]
 	c.enabled = false
 	local newNodeId = innovation:nextNode()
-	local node = require("neat.node").new(newNodeId, "hidden")
+	local node = Node(newNodeId, "hidden")
 	self:addNode(node)
 	-- create two connections: from->new, new->to
 	local innov1 = innovation:nextConnId(c.from, newNodeId)
 	local innov2 = innovation:nextConnId(newNodeId, c.to)
-	local Conn = require("neat.connection")
-	local conn1 = Conn.new(c.from, newNodeId, 1, true, innov1)
-	local conn2 = Conn.new(newNodeId, c.to, c.weight, true, innov2)
+	local conn1 = Connection.new(c.from, newNodeId, 1, true, innov1)
+	local conn2 = Connection.new(newNodeId, c.to, c.weight, true, innov2)
 	self:addConnection(conn1)
 	self:addConnection(conn2)
 	return true
@@ -108,10 +110,11 @@ end
 
 -- crossover (assumes self.fitness >= other.fitness when using uniform)
 function Genome:crossover(other)
-	local child = Genome.new()
+	---@type Genome
+	local child = Genome()
 	-- copy nodes
 	for id, node in pairs(self.nodes) do
-		child:addNode(require("neat.node").new(node.id, node.type))
+		child:addNode(Node(node.id, node.type))
 	end
 	-- combine connections by innovation
 	for innov, c1 in pairs(self.connections) do
@@ -120,11 +123,11 @@ function Genome:crossover(other)
 			-- matching: pick randomly
 			local chosen = (math.random() < 0.5) and c1 or c2
 			child:addConnection(
-				require("neat.connection").new(chosen.from, chosen.to, chosen.weight, chosen.enabled, chosen.innovation)
+				Connection.new(chosen.from, chosen.to, chosen.weight, chosen.enabled, chosen.innovation)
 			)
 		else
 			-- disjoint or excess: inherited from more fit parent (self)
-			child:addConnection(require("neat.connection").new(c1.from, c1.to, c1.weight, c1.enabled, c1.innovation))
+			child:addConnection(Connection.new(c1.from, c1.to, c1.weight, c1.enabled, c1.innovation))
 		end
 	end
 	return child

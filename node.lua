@@ -1,15 +1,17 @@
 -- neat/node.lua
-local Node = {}
-Node.__index = Node
+local class = require("lovely-neat.modified_middleclass")
 
--- types: "input", "hidden", "output", "bias"
-function Node.new(id, nodeType)
-    return setmetatable({
-        id = id,
-        type = nodeType or "hidden",
-        activation = 0,
-        incoming = {}, -- list of connection gene refs (ids)
-    }, Node)
+---@class Node: Object
+local Node = class("Node")
+
+-- A node in the neural network
+---@param id number
+---@param nodeType string @"input" | "hidden" | "output" | "bias"
+function Node:initialize(id, nodeType)
+	self.id = id
+	self.type = nodeType or "hidden"
+	self.activation = 0
+	self.incoming = {} -- list of connection gene refs (ids)
 end
 
 return Node

@@ -20,15 +20,18 @@ local function defaultConfig()
 		inputCount = 3,
 		outputCount = 1,
 		bias = true,
+		-- Hidden layer configuration
+		hiddenLayers = { 4, 3 }, -- Array of hidden layer sizes: [4 nodes, 3 nodes]
 		compatThreshold = 3.0,
 		c1 = 1.0,
 		c2 = 1.0,
 		c3 = 0.4,
-		-- Increased mutation rates for better exploration
+		-- Reduced mutation rates for multiple mutations per generation
 		weightPerturbRate = 0.9,
 		weightPerturbStrength = 2.0,
-		addNodeRate = 0.1, -- Increased from 0.03
-		addConnRate = 0.15, -- Increased from 0.05
+		addNodeRate = 0.03, -- Reduced from 0.1 for multiple attempts
+		addConnRate = 0.05, -- Reduced from 0.15 for multiple attempts
+		removeConnRate = 0.005, -- Reduced from 0.01 for multiple attempts
 		weightInitRange = 2, -- Increased range
 		elitism = 2, -- Keep top 2 per species
 		survivalThreshold = 0.3, -- Increased from 0.2
@@ -38,6 +41,13 @@ local function defaultConfig()
 		weightMutationRate = 0.8,
 		uniformWeightRate = 0.1, -- Chance to completely randomize weight
 		modInnovSeed = nil,
+
+		-- Dynamic mutation amplifiers over generations
+		mutationAmplifierOverGenerations = 500, -- Over 1000 generations, node addition decreases
+		connectionMutationAmplifierRange = { from = 250, to = 850 }, -- Connection mutation boom from gen 100-200
+
+		-- Multiple mutation attempts per generation
+		maxMutationAttempts = 3, -- Allow up to 3 mutation attempts per genome per generation
 	}
 
 	return config
@@ -92,21 +102,49 @@ function Population:initialize(cfg)
 			g:addNode(Node(nid, "output"))
 		end
 
-		-- fully connect inputs + bias to outputs with diverse weights
-		local inputIds = {}
+		-- Create hidden layers if specified
+		local layerNodes = {} -- Track nodes by layer for connection
+
+		-- Layer 0: Input + bias nodes
+		layerNodes[0] = {}
 		for id, node in pairs(g.nodes) do
 			if node.type == "input" or node.type == "bias" then
-				table.insert(inputIds, id)
+				table.insert(layerNodes[0], id)
 			end
 		end
 
-		for _, inId in ipairs(inputIds) do
-			for id, node in pairs(g.nodes) do
-				if node.type == "output" then
-					local innovId = self.innovation:nextConnId(inId, node.id)
+		-- Create hidden layers
+		if finalCfg.hiddenLayers and #finalCfg.hiddenLayers > 0 then
+			for layerIndex, layerSize in ipairs(finalCfg.hiddenLayers) do
+				layerNodes[layerIndex] = {}
+				for nodeIdx = 1, layerSize do
+					local nid = self.innovation:nextNode()
+					g:addNode(Node(nid, "hidden"))
+					table.insert(layerNodes[layerIndex], nid)
+				end
+			end
+		end
+
+		-- Final layer: Output nodes
+		local finalLayerIndex = (finalCfg.hiddenLayers and #finalCfg.hiddenLayers or 0) + 1
+		layerNodes[finalLayerIndex] = {}
+		for id, node in pairs(g.nodes) do
+			if node.type == "output" then
+				table.insert(layerNodes[finalLayerIndex], id)
+			end
+		end
+
+		-- Connect layers sequentially (feedforward)
+		for layerIdx = 0, finalLayerIndex - 1 do
+			local fromLayer = layerNodes[layerIdx]
+			local toLayer = layerNodes[layerIdx + 1]
+
+			for _, fromNodeId in ipairs(fromLayer) do
+				for _, toNodeId in ipairs(toLayer) do
+					local innovId = self.innovation:nextConnId(fromNodeId, toNodeId)
 					-- Use larger initial weight range for better diversity
 					local weight = (math.random() * 4 - 2) -- Range [-2, 2]
-					g:addConnection(Connection.new(inId, node.id, weight, true, innovId))
+					g:addConnection(Connection(fromNodeId, toNodeId, weight, true, innovId))
 				end
 			end
 		end
@@ -173,35 +211,75 @@ function Population:buildNetworks()
 	return out
 end
 
--- Enhanced mutation function
+-- Calculate dynamic mutation rates based on current generation
+function Population:getDynamicMutationRates()
+	local currentGen = self.generation or 1
+	local rates = {
+		addNodeRate = self.cfg.addNodeRate,
+		addConnRate = self.cfg.addConnRate,
+		removeConnRate = self.cfg.removeConnRate,
+	}
+
+	-- Node addition amplifier: starts VERY HIGH, decreases to low over time
+	if self.cfg.mutationAmplifierOverGenerations and currentGen <= self.cfg.mutationAmplifierOverGenerations then
+		-- Calculate amplifier: starts at 10x (BIG), decreases to 0.5x (low) over generations
+		local progress = currentGen / self.cfg.mutationAmplifierOverGenerations
+		local amplifier = 20.0 * (1.0 - progress) + 0.5 * progress -- Linear interpolation from 10 to 0.5
+		rates.addNodeRate = self.cfg.addNodeRate * amplifier
+	end
+
+	-- Connection mutation amplifier: boom period between specific generations
+	local connRange = self.cfg.connectionMutationAmplifierRange
+	if connRange and currentGen >= connRange.from and currentGen <= connRange.to then
+		-- During boom period: 3x amplifier for both add and remove
+		rates.addConnRate = self.cfg.addConnRate * 3.0
+		rates.removeConnRate = self.cfg.removeConnRate * 3.0
+	end
+
+	return rates
+end
+
+-- Enhanced mutation function with multiple complete attempts
 function Population:mutateGenome(genome)
 	local mutated = false
+	local dynamicRates = self:getDynamicMutationRates()
+	local maxAttempts = self.cfg.maxMutationAttempts or 1
 
-	-- Weight mutations
-	if math.random() < self.cfg.weightMutationRate then
-		for _, c in pairs(genome.connections) do
-			if math.random() < self.cfg.weightPerturbRate then
-				-- Perturb existing weight
-				c.weight = c.weight + (math.random() * 2 - 1) * self.cfg.weightPerturbStrength
-			elseif math.random() < self.cfg.uniformWeightRate then
-				-- Completely new weight
-				c.weight = (math.random() * 4 - 2) -- Range [-2, 2]
+	-- Perform multiple complete mutation attempts
+	for attempt = 1, maxAttempts do
+		-- Weight mutations
+		if math.random() < self.cfg.weightMutationRate then
+			for _, c in pairs(genome.connections) do
+				if math.random() < self.cfg.weightPerturbRate then
+					-- Perturb existing weight
+					c.weight = c.weight + (math.random() * 2 - 1) * self.cfg.weightPerturbStrength
+				elseif math.random() < self.cfg.uniformWeightRate then
+					-- Completely new weight
+					c.weight = (math.random() * 4 - 2) -- Range [-2, 2]
+				end
+			end
+			mutated = true
+		end
+
+		-- Add connection
+		if math.random() < dynamicRates.addConnRate then
+			if genome:mutateAddConnection(self.innovation) then
+				mutated = true
 			end
 		end
-		mutated = true
-	end
 
-	-- Add connection
-	if math.random() < self.cfg.addConnRate then
-		if genome:mutateAddConnection(self.innovation) then
-			mutated = true
+		-- Remove connection
+		if math.random() < dynamicRates.removeConnRate then
+			if genome:mutateRemoveConnection(self.innovation) then
+				mutated = true
+			end
 		end
-	end
 
-	-- Add node
-	if math.random() < self.cfg.addNodeRate then
-		if genome:mutateAddNode(self.innovation) then
-			mutated = true
+		-- Add node
+		if math.random() < dynamicRates.addNodeRate then
+			if genome:mutateAddNode(self.innovation) then
+				mutated = true
+			end
 		end
 	end
 
@@ -226,9 +304,10 @@ function Population:epoch()
 	end
 
 	-- Increase mutation rates if stagnating
-	if self.generationWithoutImprovement > 10 then
+	if self.generationWithoutImprovement > 5 then
 		self.cfg.addNodeRate = math.min(0.2, self.cfg.addNodeRate * 1.1)
 		self.cfg.addConnRate = math.min(0.3, self.cfg.addConnRate * 1.1)
+		self.cfg.removeConnRate = math.min(0.3, self.cfg.removeConnRate * 1.1)
 		self.cfg.weightPerturbStrength = math.min(3.0, self.cfg.weightPerturbStrength * 1.1)
 	end
 
@@ -337,6 +416,7 @@ function Population:epoch()
 	self.generation = (self.generation or 1) + 1
 end
 
+---@return Genome?
 function Population:getBest()
 	return self.best
 end

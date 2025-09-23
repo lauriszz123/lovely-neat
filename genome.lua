@@ -64,14 +64,17 @@ function Genome:mutateAddConnection(innovation, maxAttempts)
 		local a = nodeIds[math.random(#nodeIds)]
 		local b = nodeIds[math.random(#nodeIds)]
 		if a ~= b then
-			-- do not connect into input nodes
-			if self.nodes[a].type == "output" and self.nodes[b].type == "input" then
-				-- avoid backward trivial
+			-- Do not connect TO input nodes (they should only be sources)
+			if self.nodes[b].type == "input" or self.nodes[b].type == "bias" then
+				-- Skip: cannot connect anything TO input/bias nodes
+				-- Do not connect FROM output nodes (they should only be sinks)
+			elseif self.nodes[a].type == "output" then
+				-- Skip: cannot connect FROM output nodes
 			else
-				-- check existing
+				-- Valid connection: check if it doesn't already exist
 				if not self:hasConnection(a, b) then
 					local innov = innovation:nextConnId(a, b)
-					local conn = Connection.new(a, b, (math.random() * 2 - 1), true, innov)
+					local conn = Connection(a, b, (math.random() * 2 - 1), true, innov)
 					self:addConnection(conn)
 					return true
 				end
@@ -79,6 +82,20 @@ function Genome:mutateAddConnection(innovation, maxAttempts)
 		end
 	end
 	return false
+end
+
+function Genome:mutateRemoveConnection(innovation)
+	-- pick a random connection to remove
+	local connIds = {}
+	for innov, _ in pairs(self.connections) do
+		table.insert(connIds, innov)
+	end
+	if #connIds == 0 then
+		return false
+	end
+	local toRemove = connIds[math.random(#connIds)]
+	self.connections[toRemove] = nil
+	return true
 end
 
 -- add node (split connection)
@@ -101,8 +118,8 @@ function Genome:mutateAddNode(innovation)
 	-- create two connections: from->new, new->to
 	local innov1 = innovation:nextConnId(c.from, newNodeId)
 	local innov2 = innovation:nextConnId(newNodeId, c.to)
-	local conn1 = Connection.new(c.from, newNodeId, 1, true, innov1)
-	local conn2 = Connection.new(newNodeId, c.to, c.weight, true, innov2)
+	local conn1 = Connection(c.from, newNodeId, 1, true, innov1)
+	local conn2 = Connection(newNodeId, c.to, c.weight, true, innov2)
 	self:addConnection(conn1)
 	self:addConnection(conn2)
 	return true
@@ -122,12 +139,10 @@ function Genome:crossover(other)
 		if c2 then
 			-- matching: pick randomly
 			local chosen = (math.random() < 0.5) and c1 or c2
-			child:addConnection(
-				Connection.new(chosen.from, chosen.to, chosen.weight, chosen.enabled, chosen.innovation)
-			)
+			child:addConnection(Connection(chosen.from, chosen.to, chosen.weight, chosen.enabled, chosen.innovation))
 		else
 			-- disjoint or excess: inherited from more fit parent (self)
-			child:addConnection(Connection.new(c1.from, c1.to, c1.weight, c1.enabled, c1.innovation))
+			child:addConnection(Connection(c1.from, c1.to, c1.weight, c1.enabled, c1.innovation))
 		end
 	end
 	return child
@@ -225,6 +240,48 @@ function Genome:getUniqueId()
 	-- normalize to 0-1 range using modulo and division
 	hash = math.abs(hash)
 	return (hash % 1000000) / 1000000
+end
+
+-- Training function for the genome using backpropagation
+function Genome:train(trainingData, epochs, learningRate)
+	epochs = epochs or 100
+	learningRate = learningRate or 0.1
+
+	local Network = require("lovely-neat.network")
+	local network = Network.buildFromGenome(self)
+
+	local totalError = 0
+
+	for epoch = 1, epochs do
+		local epochError = 0
+
+		for _, example in ipairs(trainingData) do
+			local inputs = example.inputs
+			local expectedOutputs = example.outputs
+
+			-- Forward pass
+			local outputs = network:evaluate(inputs)
+
+			-- Backward pass (updates genome weights)
+			local error = network:backward(expectedOutputs, learningRate)
+			epochError = epochError + error
+		end
+
+		totalError = epochError / #trainingData
+
+		-- Optional: print progress every 10 epochs
+		if epoch % 10 == 0 then
+			print(string.format("Epoch %d, Average Error: %.6f", epoch, totalError))
+		end
+
+		-- Stop early if error is very small
+		if totalError < 0.001 then
+			print(string.format("Training converged at epoch %d with error %.6f", epoch, totalError))
+			break
+		end
+	end
+
+	return totalError
 end
 
 return Genome

@@ -7,7 +7,26 @@ local Network = class("Network")
 
 --- @param x number
 local function sigmoid(x)
-	return 1 / (1 + math.exp(-4.9 * x)) -- 4.9 is a common steepness factor
+	-- Optimized sigmoid with clamping to prevent overflow
+	if x > 10 then
+		return 0.99996
+	end
+	if x < -10 then
+		return 0.00004
+	end
+	return 1 / (1 + math.exp(-4.9 * x))
+end
+
+-- Fast approximation for sigmoid (optional speedup)
+local function fastSigmoid(x)
+	-- Piece-wise linear approximation for extreme speed
+	if x > 2.5 then
+		return 1.0
+	end
+	if x < -2.5 then
+		return 0.0
+	end
+	return 0.5 + 0.2 * x -- Linear approximation in middle range
 end
 
 -- Topological sort using Kahn's algorithm
@@ -81,53 +100,85 @@ function Network.buildFromGenome(genome)
 	-- Get topological order for evaluation
 	local nodeOrder = topologicalSort(genome.nodes, genome.connections)
 
-	-- Return network object
-	local net = {}
+	-- Return optimized network object
+	local net = {
+		-- Pre-allocated output array for performance
+		outputCache = {},
+		-- Cache input/output node IDs for faster lookup
+		inputNodes = {},
+		outputNodes = {},
+		hiddenNodes = {},
+	}
+
+	-- Pre-cache node types for faster evaluation
+	for id, ndata in pairs(nodes) do
+		if ndata.node.type == "input" or ndata.node.type == "bias" then
+			table.insert(net.inputNodes, { id = id, ndata = ndata })
+		elseif ndata.node.type == "output" then
+			table.insert(net.outputNodes, { id = id, ndata = ndata })
+		else
+			table.insert(net.hiddenNodes, { id = id, ndata = ndata })
+		end
+	end
+
+	-- Sort output nodes by ID for consistency
+	table.sort(net.outputNodes, function(a, b)
+		return a.id < b.id
+	end)
 
 	function net:evaluate(inputValues)
-		-- Reset all activations
-		for id, ndata in pairs(nodes) do
-			ndata.activation = 0
+		-- Fast reset using pre-cached nodes
+		for _, nodeInfo in ipairs(net.hiddenNodes) do
+			nodeInfo.ndata.activation = 0
+		end
+		for _, nodeInfo in ipairs(net.outputNodes) do
+			nodeInfo.ndata.activation = 0
 		end
 
-		-- Set input and bias values
-		for id, ndata in pairs(nodes) do
-			if ndata.node.type == "input" then
-				ndata.activation = inputValues[id] or 0
-			elseif ndata.node.type == "bias" then
-				ndata.activation = 1
+		-- Set input and bias values using pre-cached nodes
+		for _, nodeInfo in ipairs(net.inputNodes) do
+			if nodeInfo.ndata.node.type == "input" then
+				nodeInfo.ndata.activation = inputValues[nodeInfo.id] or 0
+			else -- bias
+				nodeInfo.ndata.activation = 1
 			end
 		end
 
-		-- Process nodes in topological order
+		-- Process nodes in topological order (optimized)
 		for _, nodeId in ipairs(nodeOrder) do
 			local ndata = nodes[nodeId]
 			if ndata and ndata.node.type ~= "input" and ndata.node.type ~= "bias" then
 				local sum = 0
-				for _, incoming in ipairs(ndata.incoming) do
-					local fromNode = nodes[incoming.from]
-					if fromNode then
-						sum = sum + fromNode.activation * incoming.weight
+				-- Unrolled loop for small number of connections (common case)
+				local incoming = ndata.incoming
+				local incomingCount = #incoming
+
+				if incomingCount == 1 then
+					local conn = incoming[1]
+					sum = nodes[conn.from].activation * conn.weight
+				elseif incomingCount == 2 then
+					local conn1, conn2 = incoming[1], incoming[2]
+					sum = nodes[conn1.from].activation * conn1.weight + nodes[conn2.from].activation * conn2.weight
+				else
+					-- General case for many connections
+					for i = 1, incomingCount do
+						local conn = incoming[i]
+						sum = sum + nodes[conn.from].activation * conn.weight
 					end
 				end
+
 				ndata.activation = sigmoid(sum)
 			end
 		end
 
-		-- Collect outputs
-		local outputs = {}
-		for id, ndata in pairs(nodes) do
-			if ndata.node.type == "output" then
-				table.insert(outputs, { id = id, value = ndata.activation })
-			end
+		-- Collect outputs using pre-cached output nodes
+		local outputCount = #net.outputNodes
+		for i = 1, outputCount do
+			local nodeInfo = net.outputNodes[i]
+			net.outputCache[i] = { id = nodeInfo.id, value = nodeInfo.ndata.activation }
 		end
 
-		-- Sort outputs by id for consistency
-		table.sort(outputs, function(a, b)
-			return a.id < b.id
-		end)
-
-		return outputs
+		return net.outputCache
 	end
 
 	-- Derivative of sigmoid function

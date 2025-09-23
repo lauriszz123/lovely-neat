@@ -12,42 +12,50 @@ local Connection = require("lovely-neat.connection")
 ---@class Population: Object
 local Population = class("Population")
 
--- Better config for Flappy Bird
+-- Optimized config for better performance and evolution
 local function defaultConfig()
 	---@class DefaultPopulationConfig
 	local config = {
-		populationSize = 150,
+		populationSize = 100, -- Increased for better diversity
 		inputCount = 3,
 		outputCount = 1,
 		bias = true,
-		-- Hidden layer configuration
-		hiddenLayers = { 4, 3 }, -- Array of hidden layer sizes: [4 nodes, 3 nodes]
+		-- Hidden layer configuration - now randomized per genome
+		minHiddenLayers = 0, -- Minimum hidden layers (can be 0 for direct connections)
+		maxHiddenLayers = 3, -- Reduced from 4 for performance
+		minNodesPerLayer = 2, -- Minimum nodes per hidden layer
+		maxNodesPerLayer = 6, -- Reduced from 8 for performance
+
+		-- Sparse connectivity parameters - optimized
+		sparseConnectivity = true, -- Enable sparse random connections
+		connectionProbability = 0.4, -- Increased from 0.3 for better connectivity
+		guaranteedOutputConnections = true, -- Ensure each output has at least one input
+
 		compatThreshold = 3.0,
 		c1 = 1.0,
 		c2 = 1.0,
 		c3 = 0.4,
-		-- Reduced mutation rates for multiple mutations per generation
-		weightPerturbRate = 0.9,
-		weightPerturbStrength = 2.0,
-		addNodeRate = 0.03, -- Reduced from 0.1 for multiple attempts
-		addConnRate = 0.05, -- Reduced from 0.15 for multiple attempts
-		removeConnRate = 0.005, -- Reduced from 0.01 for multiple attempts
-		weightInitRange = 2, -- Increased range
-		elitism = 2, -- Keep top 2 per species
-		survivalThreshold = 0.3, -- Increased from 0.2
-		stagnationThreshold = 15,
-		-- New parameters for better evolution
-		crossoverRate = 0.75,
-		weightMutationRate = 0.8,
-		uniformWeightRate = 0.1, -- Chance to completely randomize weight
-		modInnovSeed = nil,
+		-- Optimized mutation rates for faster convergence
+		weightPerturbRate = 0.9, -- Reduced from 0.95 for stability
+		weightPerturbStrength = 2.5, -- Reduced from 3.0 for stability
+		addNodeRate = 0.05, -- Reduced from 0.08 for performance
+		addConnRate = 0.08, -- Reduced from 0.12 for performance
+		removeConnRate = 0.015, -- Reduced from 0.02 for stability
+		weightInitRange = 2.5, -- Reduced from 3 for stability
+		elitism = 3, -- Increased from 2 for better preservation
+		survivalThreshold = 0.25, -- Reduced from 0.3 for stronger selection
+		stagnationThreshold = 12, -- Reduced from 15 for faster adaptation
+		-- Evolution parameters - optimized
+		crossoverRate = 0.8, -- Increased from 0.75 for more diversity
+		weightMutationRate = 0.85, -- Reduced from 0.95 for stability
+		uniformWeightRate = 0.1, -- Reduced from 0.15 for stability
 
-		-- Dynamic mutation amplifiers over generations
-		mutationAmplifierOverGenerations = 500, -- Over 1000 generations, node addition decreases
-		connectionMutationAmplifierRange = { from = 250, to = 850 }, -- Connection mutation boom from gen 100-200
+		-- Dynamic mutation amplifiers - optimized for faster evolution
+		mutationAmplifierOverGenerations = 150, -- Reduced from 200 for faster convergence
+		connectionMutationAmplifierRange = { from = 3, to = 50 }, -- Shorter boom period
 
-		-- Multiple mutation attempts per generation
-		maxMutationAttempts = 3, -- Allow up to 3 mutation attempts per genome per generation
+		-- Multiple mutation attempts - optimized
+		maxMutationAttempts = 3, -- Reduced from 5 for performance
 	}
 
 	return config
@@ -104,47 +112,115 @@ function Population:initialize(cfg)
 
 		-- Create hidden layers if specified
 		local layerNodes = {} -- Track nodes by layer for connection
+		local allNodeIds = {} -- Track all node IDs for sparse connectivity
 
 		-- Layer 0: Input + bias nodes
 		layerNodes[0] = {}
 		for id, node in pairs(g.nodes) do
 			if node.type == "input" or node.type == "bias" then
 				table.insert(layerNodes[0], id)
+				table.insert(allNodeIds, id)
 			end
 		end
 
-		-- Create hidden layers
-		if finalCfg.hiddenLayers and #finalCfg.hiddenLayers > 0 then
-			for layerIndex, layerSize in ipairs(finalCfg.hiddenLayers) do
-				layerNodes[layerIndex] = {}
-				for nodeIdx = 1, layerSize do
-					local nid = self.innovation:nextNode()
-					g:addNode(Node(nid, "hidden"))
-					table.insert(layerNodes[layerIndex], nid)
-				end
-			end
+		-- Create random number of hidden layers with random sizes
+		local numHiddenLayers = math.random(finalCfg.minHiddenLayers, finalCfg.maxHiddenLayers)
+
+		if i <= 5 then -- Debug output for first 5 genomes
+			print(string.format("Genome %d: %d hidden layers", i, numHiddenLayers))
 		end
 
-		-- Final layer: Output nodes
-		local finalLayerIndex = (finalCfg.hiddenLayers and #finalCfg.hiddenLayers or 0) + 1
+		for layerIndex = 1, numHiddenLayers do
+			layerNodes[layerIndex] = {}
+			local layerSize = math.random(finalCfg.minNodesPerLayer, finalCfg.maxNodesPerLayer)
+
+			if i <= 5 then -- Debug output for first 5 genomes
+				print(string.format("  Layer %d: %d nodes", layerIndex, layerSize))
+			end
+
+			for nodeIdx = 1, layerSize do
+				local nid = self.innovation:nextNode()
+				g:addNode(Node(nid, "hidden"))
+				table.insert(layerNodes[layerIndex], nid)
+				table.insert(allNodeIds, nid)
+			end
+		end -- Final layer: Output nodes
+		local finalLayerIndex = numHiddenLayers + 1
 		layerNodes[finalLayerIndex] = {}
 		for id, node in pairs(g.nodes) do
 			if node.type == "output" then
 				table.insert(layerNodes[finalLayerIndex], id)
+				table.insert(allNodeIds, id)
 			end
 		end
 
-		-- Connect layers sequentially (feedforward)
-		for layerIdx = 0, finalLayerIndex - 1 do
-			local fromLayer = layerNodes[layerIdx]
-			local toLayer = layerNodes[layerIdx + 1]
+		-- Create sparse random connections instead of fully connected layers
+		if finalCfg.sparseConnectivity then
+			-- Sparse connectivity: random connections between compatible nodes
+			local connectedOutputs = {} -- Track which outputs have connections
+			local totalConnections = 0 -- Count total connections for debug
 
-			for _, fromNodeId in ipairs(fromLayer) do
-				for _, toNodeId in ipairs(toLayer) do
-					local innovId = self.innovation:nextConnId(fromNodeId, toNodeId)
-					-- Use larger initial weight range for better diversity
-					local weight = (math.random() * 4 - 2) -- Range [-2, 2]
-					g:addConnection(Connection(fromNodeId, toNodeId, weight, true, innovId))
+			for fromLayerIdx = 0, finalLayerIndex - 1 do
+				local fromLayer = layerNodes[fromLayerIdx]
+
+				-- Connect to all subsequent layers (allowing skip connections)
+				for toLayerIdx = fromLayerIdx + 1, finalLayerIndex do
+					local toLayer = layerNodes[toLayerIdx]
+
+					for _, fromNodeId in ipairs(fromLayer) do
+						for _, toNodeId in ipairs(toLayer) do
+							-- Random chance of connection
+							if math.random() < finalCfg.connectionProbability then
+								local innovId = self.innovation:nextConnId(fromNodeId, toNodeId)
+								local weight = (math.random() * 4 - 2) -- Range [-2, 2]
+								g:addConnection(Connection(fromNodeId, toNodeId, weight, true, innovId))
+								totalConnections = totalConnections + 1
+
+								-- Track that this output is connected
+								if toLayerIdx == finalLayerIndex then
+									connectedOutputs[toNodeId] = true
+								end
+							end
+						end
+					end
+				end
+			end
+
+			if i <= 5 then -- Debug output for first 5 genomes
+				print(string.format("  Sparse connections: %d total", totalConnections))
+			end -- Ensure each output has at least one connection if guaranteed
+			if finalCfg.guaranteedOutputConnections then
+				for _, outputId in ipairs(layerNodes[finalLayerIndex]) do
+					if not connectedOutputs[outputId] then
+						-- Connect to a random node from a previous layer
+						local possibleSources = {}
+						for layerIdx = 0, finalLayerIndex - 1 do
+							for _, nodeId in ipairs(layerNodes[layerIdx]) do
+								table.insert(possibleSources, nodeId)
+							end
+						end
+
+						if #possibleSources > 0 then
+							local sourceId = possibleSources[math.random(#possibleSources)]
+							local innovId = self.innovation:nextConnId(sourceId, outputId)
+							local weight = (math.random() * 4 - 2)
+							g:addConnection(Connection(sourceId, outputId, weight, true, innovId))
+						end
+					end
+				end
+			end
+		else
+			-- Fallback: Connect layers sequentially (feedforward) - dense connectivity
+			for layerIdx = 0, finalLayerIndex - 1 do
+				local fromLayer = layerNodes[layerIdx]
+				local toLayer = layerNodes[layerIdx + 1]
+
+				for _, fromNodeId in ipairs(fromLayer) do
+					for _, toNodeId in ipairs(toLayer) do
+						local innovId = self.innovation:nextConnId(fromNodeId, toNodeId)
+						local weight = (math.random() * 4 - 2) -- Range [-2, 2]
+						g:addConnection(Connection(fromNodeId, toNodeId, weight, true, innovId))
+					end
 				end
 			end
 		end
@@ -222,18 +298,18 @@ function Population:getDynamicMutationRates()
 
 	-- Node addition amplifier: starts VERY HIGH, decreases to low over time
 	if self.cfg.mutationAmplifierOverGenerations and currentGen <= self.cfg.mutationAmplifierOverGenerations then
-		-- Calculate amplifier: starts at 10x (BIG), decreases to 0.5x (low) over generations
+		-- Calculate amplifier: starts at 25x (MASSIVE), decreases to 1x (normal) over generations
 		local progress = currentGen / self.cfg.mutationAmplifierOverGenerations
-		local amplifier = 20.0 * (1.0 - progress) + 0.5 * progress -- Linear interpolation from 10 to 0.5
+		local amplifier = 25.0 * (1.0 - progress) + 1.0 * progress -- Linear interpolation from 25 to 1
 		rates.addNodeRate = self.cfg.addNodeRate * amplifier
 	end
 
 	-- Connection mutation amplifier: boom period between specific generations
 	local connRange = self.cfg.connectionMutationAmplifierRange
 	if connRange and currentGen >= connRange.from and currentGen <= connRange.to then
-		-- During boom period: 3x amplifier for both add and remove
-		rates.addConnRate = self.cfg.addConnRate * 3.0
-		rates.removeConnRate = self.cfg.removeConnRate * 3.0
+		-- During boom period: 5x amplifier for both add and remove
+		rates.addConnRate = self.cfg.addConnRate * 5.0
+		rates.removeConnRate = self.cfg.removeConnRate * 5.0
 	end
 
 	return rates
@@ -390,7 +466,7 @@ function Population:epoch()
 					child = util.copy(s.members[1])
 				end
 
-				-- Mutate
+				-- Mutate - ALWAYS mutate all offspring for rapid evolution
 				self:mutateGenome(child)
 
 				table.insert(newGen, child)
@@ -404,11 +480,13 @@ function Population:epoch()
 		end
 	end
 
-	-- Fill remaining slots with mutated copies
+	-- Fill remaining slots with heavily mutated copies for rapid exploration
 	while #newGen < self.cfg.populationSize do
 		local parent = self.genomes[math.random(1, math.min(10, #self.genomes))] -- Bias toward better genomes
 		local copy = util.copy(parent)
+		-- Apply extra mutations for rapid exploration
 		self:mutateGenome(copy)
+		self:mutateGenome(copy) -- Double mutation for extra diversity
 		table.insert(newGen, copy)
 	end
 

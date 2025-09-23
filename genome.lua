@@ -269,11 +269,6 @@ function Genome:train(trainingData, epochs, learningRate)
 
 		totalError = epochError / #trainingData
 
-		-- Optional: print progress every 10 epochs
-		if epoch % 10 == 0 then
-			print(string.format("Epoch %d, Average Error: %.6f", epoch, totalError))
-		end
-
 		-- Stop early if error is very small
 		if totalError < 0.001 then
 			print(string.format("Training converged at epoch %d with error %.6f", epoch, totalError))

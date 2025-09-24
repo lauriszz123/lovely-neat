@@ -17,18 +17,6 @@ local function sigmoid(x)
 	return 1 / (1 + math.exp(-4.9 * x))
 end
 
--- Fast approximation for sigmoid (optional speedup)
-local function fastSigmoid(x)
-	-- Piece-wise linear approximation for extreme speed
-	if x > 2.5 then
-		return 1.0
-	end
-	if x < -2.5 then
-		return 0.0
-	end
-	return 0.5 + 0.2 * x -- Linear approximation in middle range
-end
-
 -- Topological sort using Kahn's algorithm
 local function topologicalSort(nodes, connections)
 	local inDegree = {}
@@ -196,16 +184,18 @@ function Network.buildFromGenome(genome)
 			nodeGradients[id] = 0
 		end
 
-		-- Calculate output layer gradients (error derivatives)
+		-- Calculate output layer gradients (error derivatives) using the SAME
+		-- deterministic order used by evaluate (sorted by node id)
 		local outputIndex = 1
-		for id, ndata in pairs(nodes) do
-			if ndata.node.type == "output" then
-				local target = targetOutputs[outputIndex] or 0
-				local output = ndata.activation
-				-- Gradient = (target - output) * sigmoid'(output)
-				nodeGradients[id] = (target - output) * sigmoidDerivative(output)
-				outputIndex = outputIndex + 1
-			end
+		for i = 1, #net.outputNodes do
+			local nodeInfo = net.outputNodes[i]
+			local id = nodeInfo.id
+			local ndata = nodeInfo.ndata
+			local target = targetOutputs[outputIndex] or 0
+			local output = ndata.activation
+			-- Gradient = (target - output) * sigmoid'(output)
+			nodeGradients[id] = (target - output) * sigmoidDerivative(output)
+			outputIndex = outputIndex + 1
 		end
 
 		-- Backpropagate gradients through the network (reverse topological order)
@@ -250,16 +240,16 @@ function Network.buildFromGenome(genome)
 			end
 		end
 
-		-- Return the total error for monitoring
+		-- Return the total error for monitoring (use same deterministic order)
 		local totalError = 0
 		outputIndex = 1
-		for id, ndata in pairs(nodes) do
-			if ndata.node.type == "output" then
-				local target = targetOutputs[outputIndex] or 0
-				local output = ndata.activation
-				totalError = totalError + 0.5 * (target - output) * (target - output)
-				outputIndex = outputIndex + 1
-			end
+		for i = 1, #net.outputNodes do
+			local nodeInfo = net.outputNodes[i]
+			local ndata = nodeInfo.ndata
+			local target = targetOutputs[outputIndex] or 0
+			local output = ndata.activation
+			totalError = totalError + 0.5 * (target - output) * (target - output)
+			outputIndex = outputIndex + 1
 		end
 
 		return totalError
@@ -309,6 +299,21 @@ function Network.buildFromGenome(genome)
 				end
 			end
 
+			-- Ensure outputs are positioned in the final layer for clear visualization
+			local maxDepth = 0
+			for _, d in pairs(nodeDepths) do
+				if d > maxDepth then
+					maxDepth = d
+				end
+			end
+			-- If there are only inputs (no connections), push outputs to layer 1
+			local outputLayer = math.max(1, maxDepth)
+			for id, ndata in pairs(nodes) do
+				if ndata.node.type == "output" then
+					nodeDepths[id] = outputLayer
+				end
+			end
+
 			-- Group nodes by their calculated depth
 			local layerGroups = {}
 			for id, depth in pairs(nodeDepths) do
@@ -318,9 +323,9 @@ function Network.buildFromGenome(genome)
 				table.insert(layerGroups[depth], { id = id, value = nodes[id].activation, type = nodes[id].node.type })
 			end
 
-			-- Convert to ordered array
+			-- Convert to ordered array from 0 to outputLayer
 			local orderedLayers = {}
-			for depth = 0, 10 do -- Support up to 10 layers
+			for depth = 0, outputLayer do
 				if layerGroups[depth] then
 					table.insert(orderedLayers, { nodes = layerGroups[depth], depth = depth })
 				end

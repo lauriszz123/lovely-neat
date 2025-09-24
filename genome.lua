@@ -40,6 +40,33 @@ function Genome:hasConnection(from, to)
 	return false
 end
 
+-- check if there is a path from 'start' to 'goal' following enabled connections
+function Genome:hasPath(start, goal)
+	if start == goal then
+		return true
+	end
+	local visited = {}
+	local stack = { start }
+	visited[start] = true
+
+	while #stack > 0 do
+		local node = table.remove(stack)
+		for _, c in pairs(self.connections) do
+			if c.enabled and c.from == node then
+				local nxt = c.to
+				if nxt == goal then
+					return true
+				end
+				if not visited[nxt] then
+					visited[nxt] = true
+					table.insert(stack, nxt)
+				end
+			end
+		end
+	end
+	return false
+end
+
 -- mutate weights
 function Genome:mutateWeights(cfg)
 	for _, c in pairs(self.connections) do
@@ -73,10 +100,15 @@ function Genome:mutateAddConnection(innovation, maxAttempts)
 			else
 				-- Valid connection: check if it doesn't already exist
 				if not self:hasConnection(a, b) then
-					local innov = innovation:nextConnId(a, b)
-					local conn = Connection(a, b, (math.random() * 2 - 1), true, innov)
-					self:addConnection(conn)
-					return true
+					-- Prevent creating cycles: adding a->b must not have a path b->a
+					if self:hasPath(b, a) then
+						-- would create a cycle, skip
+					else
+						local innov = innovation:nextConnId(a, b)
+						local conn = Connection(a, b, (math.random() * 2 - 1), true, innov)
+						self:addConnection(conn)
+						return true
+					end
 				end
 			end
 		end
@@ -271,7 +303,9 @@ function Genome:train(trainingData, epochs, learningRate)
 
 		-- Stop early if error is very small
 		if totalError < 0.001 then
-			print(string.format("Training converged at epoch %d with error %.6f", epoch, totalError))
+			if _G.DEBUG then
+				print(string.format("Training converged at epoch %d with error %.6f", epoch, totalError))
+			end
 			break
 		end
 	end

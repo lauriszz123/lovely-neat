@@ -126,16 +126,20 @@ function Population:initialize(cfg)
 		-- Create random number of hidden layers with random sizes
 		local numHiddenLayers = math.random(finalCfg.minHiddenLayers, finalCfg.maxHiddenLayers)
 
-		if i <= 5 then -- Debug output for first 5 genomes
-			print(string.format("Genome %d: %d hidden layers", i, numHiddenLayers))
+		if _G.DEBUG then
+			if i <= 5 then -- Debug output for first 5 genomes
+				print(string.format("Genome %d: %d hidden layers", i, numHiddenLayers))
+			end
 		end
 
 		for layerIndex = 1, numHiddenLayers do
 			layerNodes[layerIndex] = {}
 			local layerSize = math.random(finalCfg.minNodesPerLayer, finalCfg.maxNodesPerLayer)
 
-			if i <= 5 then -- Debug output for first 5 genomes
-				print(string.format("  Layer %d: %d nodes", layerIndex, layerSize))
+			if _G.DEBUG then
+				if i <= 5 then -- Debug output for first 5 genomes
+					print(string.format("  Layer %d: %d nodes", layerIndex, layerSize))
+				end
 			end
 
 			for nodeIdx = 1, layerSize do
@@ -186,9 +190,11 @@ function Population:initialize(cfg)
 				end
 			end
 
-			if i <= 5 then -- Debug output for first 5 genomes
-				print(string.format("  Sparse connections: %d total", totalConnections))
-			end -- Ensure each output has at least one connection if guaranteed
+			if _G.DEBUG then
+				if i <= 5 then -- Debug output for first 5 genomes
+					print(string.format("  Sparse connections: %d total", totalConnections))
+				end -- Ensure each output has at least one connection if guaranteed
+			end
 			if finalCfg.guaranteedOutputConnections then
 				for _, outputId in ipairs(layerNodes[finalLayerIndex]) do
 					if not connectedOutputs[outputId] then
@@ -492,6 +498,12 @@ function Population:epoch()
 
 	self.genomes = newGen
 	self.generation = (self.generation or 1) + 1
+
+	-- Reset fitness for the new generation so they start fresh
+	for _, g in ipairs(self.genomes) do
+		g.fitness = 0
+		g.adjustedFitness = 0
+	end
 end
 
 ---@return Genome?

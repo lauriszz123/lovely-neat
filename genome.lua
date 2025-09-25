@@ -80,30 +80,30 @@ function Genome:mutateWeights(cfg)
 	end
 end
 
--- add connection mutation
+-- add connection mutation (simplified)
 function Genome:mutateAddConnection(innovation, maxAttempts)
-	maxAttempts = maxAttempts or 20
+	maxAttempts = maxAttempts or 10
+
 	local nodeIds = {}
 	for id, _ in pairs(self.nodes) do
 		table.insert(nodeIds, id)
 	end
+
+	-- Try to add a valid connection
 	for _ = 1, maxAttempts do
 		local a = nodeIds[math.random(#nodeIds)]
 		local b = nodeIds[math.random(#nodeIds)]
 		if a ~= b then
-			-- Do not connect TO input nodes (they should only be sources)
+			-- Cannot connect TO input/bias nodes or FROM output nodes
 			if self.nodes[b].type == "input" or self.nodes[b].type == "bias" then
-				-- Skip: cannot connect anything TO input/bias nodes
-				-- Do not connect FROM output nodes (they should only be sinks)
+				-- Skip: cannot connect TO input/bias nodes
 			elseif self.nodes[a].type == "output" then
 				-- Skip: cannot connect FROM output nodes
 			else
 				-- Valid connection: check if it doesn't already exist
 				if not self:hasConnection(a, b) then
 					-- Prevent creating cycles: adding a->b must not have a path b->a
-					if self:hasPath(b, a) then
-						-- would create a cycle, skip
-					else
+					if not self:hasPath(b, a) then
 						local innov = innovation:nextConnId(a, b)
 						local conn = Connection(a, b, (math.random() * 2 - 1), true, innov)
 						self:addConnection(conn)
